@@ -20,7 +20,7 @@ npm start
 
 ## Features
 
-The sidebar contains Assistant, Desktop, Music, Commands, Routines, Activity, Integrations, Stream panel, and Settings.
+The sidebar contains Assistant, Desktop, Music, Commands, Routines, Activity, Integrations, Quick panel, and Settings.
 
 - **Assistant:** offline command handling, optional chat with a local Ollama model, and built-in speech output.
 - **Desktop:** list and launch Start menu apps; choose folders; save primary-display screenshots; read or write the clipboard; query battery, visible windows, and displays; read upcoming events from a local `.ics` calendar file; open Windows notification settings; confirm before locking Windows or turning displays off.
@@ -29,8 +29,8 @@ The sidebar contains Assistant, Desktop, Music, Commands, Routines, Activity, In
 - **Routines:** save and manually run sequences of up to eight allowlisted commands. Folder and screenshot steps still request your input.
 - **Activity:** local counts for desktop actions, app launches, routines, and music playback. Clear the history at any time.
 - **OBS integration:** connect to OBS WebSocket on `127.0.0.1`; list and switch scenes, start or stop streaming and recording, and mute local OBS inputs. OBS Studio must be installed with its WebSocket server enabled. The password is used for the session and is not saved.
-- **Stream panel / companion / designer:** an always-on-top quick panel (`Ctrl+Shift+O`), an animated companion, and a local accent color setting.
-- **Voice:** speech output uses a system voice. Optional speech input, `Ctrl+Shift+Space`, and the “Hey Dexter” wake phrase use Chromium speech recognition; the app warns that audio may be processed by its recognition provider. Wake listening is off unless you enable it. Keep speech input off for fully local use.
+- **Everyday and coding profile:** optional local AI chat defaults to an everyday Windows laptop user in Nigeria who is Igbo and codes. The quick panel (`Ctrl+Shift+O`) is for common desktop tasks; OBS controls are an optional integration.
+- **Voice:** speech output uses a system voice. Optional speech input, `Ctrl+Shift+Space`, and the “Hey Dexter” wake phrase use Chromium speech recognition; the requested language tag defaults to English (Nigeria) (`en-NG`) and can be changed to Igbo (`ig-NG`) or another listed language. Recognition support and accent accuracy depend on Chromium’s provider; selecting a language does not train it. Add personal text corrections for recurring misheard terms. The app warns that audio may be processed by the recognition provider. Wake listening is off unless you enable it. Keep speech input off for fully local use.
 - **Diagnostics and updates:** export a small local runtime report that excludes chat and personal content; open the GitHub project to review updates manually.
 
 For local AI chat, install and start Ollama separately, download a model you want to run, then enter its installed name in Dexter Local settings. Requests go to the fixed loopback endpoint `127.0.0.1:11434`; no Ollama account or paid API is required. See the [Ollama chat API documentation](https://docs.ollama.com/api/chat). Without Ollama, desktop commands and local music still work.

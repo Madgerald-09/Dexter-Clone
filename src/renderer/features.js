@@ -21,6 +21,11 @@ const featureState = {
   routines: Array.isArray(readFeatureJSON(ROUTINES_KEY, [])) ? readFeatureJSON(ROUTINES_KEY, []) : [],
   activity: Array.isArray(readFeatureJSON(ACTIVITY_KEY, [])) ? readFeatureJSON(ACTIVITY_KEY, []).slice(-500) : [],
   accent: typeof savedFeatureSettings.accent === 'string' && /^#[0-9a-f]{6}$/i.test(savedFeatureSettings.accent) ? savedFeatureSettings.accent : '#8b7cff',
+  assistantStyle: ['nigerian-igbo', 'plain-english', 'english-uk', 'english-us'].includes(savedFeatureSettings.assistantStyle) ? savedFeatureSettings.assistantStyle : 'nigerian-igbo',
+  speechLocale: ['en-NG', 'ig-NG', 'en-GB', 'en-US'].includes(savedFeatureSettings.speechLocale) ? savedFeatureSettings.speechLocale : 'en-NG',
+  vocabulary: Array.isArray(savedFeatureSettings.speechVocabulary) ? savedFeatureSettings.speechVocabulary
+    .filter((item) => item && typeof item.heard === 'string' && typeof item.correct === 'string' && item.heard.trim() && item.correct.trim())
+    .slice(0, 30).map((item) => ({ heard: item.heard.trim().slice(0, 80), correct: item.correct.trim().slice(0, 80) })) : [],
   companion: savedFeatureSettings.companionEnabled !== false,
   speechEnabled: savedFeatureSettings.speechInputEnabled === true,
   speechConsent: savedFeatureSettings.speechConsent === true,
@@ -43,11 +48,62 @@ function persistFeatureSettings() {
   localStorage.setItem(FEATURE_SETTINGS_KEY, JSON.stringify({
     ...current,
     accent: featureState.accent,
+    assistantStyle: featureState.assistantStyle,
+    speechLocale: featureState.speechLocale,
+    speechVocabulary: featureState.vocabulary,
     companionEnabled: featureState.companion,
     speechInputEnabled: featureState.speechEnabled,
     speechConsent: featureState.speechConsent,
     wakeWordEnabled: featureState.wakeWordEnabled,
   }));
+}
+
+function getAssistantStyle() {
+  return featureState.assistantStyle;
+}
+
+function correctSpeechTranscript(transcript) {
+  let corrected = String(transcript || '');
+  const corrections = [...featureState.vocabulary].sort((left, right) => right.heard.length - left.heard.length);
+  for (const item of corrections) {
+    const escaped = item.heard.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp('(^|[^\\p{L}\\p{N}])(' + escaped + ')(?=$|[^\\p{L}\\p{N}])', 'giu');
+    corrected = corrected.replace(pattern, (_, prefix) => prefix + item.correct);
+  }
+  return corrected;
+}
+
+function renderSpeechVocabulary() {
+  const list = feature$('#vocabulary-list');
+  list.replaceChildren();
+  if (!featureState.vocabulary.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-apps';
+    empty.textContent = 'No personal corrections yet.';
+    list.append(empty);
+    return;
+  }
+  featureState.vocabulary.forEach((item, index) => {
+    const row = document.createElement('div');
+    row.className = 'saved-row';
+    const copy = document.createElement('div');
+    copy.className = 'saved-row-copy';
+    const text = document.createElement('strong');
+    text.textContent = item.heard + '  →  ' + item.correct;
+    copy.append(text);
+    const remove = document.createElement('button');
+    remove.className = 'text-button';
+    remove.type = 'button';
+    remove.textContent = 'Remove';
+    remove.setAttribute('aria-label', 'Remove correction for ' + item.heard);
+    remove.addEventListener('click', () => {
+      featureState.vocabulary.splice(index, 1);
+      persistFeatureSettings();
+      renderSpeechVocabulary();
+    });
+    row.append(copy, remove);
+    list.append(row);
+  });
 }
 
 function recordAction(kind, label) {
@@ -164,7 +220,7 @@ async function runExtraCommand(text) {
   return null;
 }
 
-window.dexterFeatures = Object.freeze({ resolveAlias, runCommand: runExtraCommand, recordAction });
+window.dexterFeatures = Object.freeze({ resolveAlias, runCommand: runExtraCommand, recordAction, getAssistantStyle, correctSpeechTranscript });
 
 function applyAccent() {
   document.documentElement.style.setProperty('--accent', featureState.accent);
@@ -553,13 +609,13 @@ function toggleVoiceCapture() {
   }
   const recognition = new SpeechRecognition();
   featureState.recognition = recognition;
-  recognition.lang = navigator.language || 'en-US';
+  recognition.lang = featureState.speechLocale;
   recognition.continuous = false;
   recognition.interimResults = true;
   recognition.maxAlternatives = 1;
   recognition.onstart = () => setSpeechStatus(true, 'Listening… · audio may be processed by Chromium’s speech provider');
   recognition.onresult = (event) => {
-    const transcript = Array.from(event.results).map((item) => item[0].transcript).join(' ').trim();
+    const transcript = correctSpeechTranscript(Array.from(event.results).map((item) => item[0].transcript).join(' ').trim());
     if (transcript) {
       feature$('#chat-input').value = transcript;
       feature$('#chat-input').focus();
@@ -622,7 +678,7 @@ function startWakeWord() {
   const recognition = new SpeechRecognition();
   featureState.wakeRecognition = recognition;
   featureState.wakeArmed = false;
-  recognition.lang = navigator.language || 'en-US';
+  recognition.lang = featureState.speechLocale;
   recognition.continuous = true;
   recognition.interimResults = false;
   recognition.maxAlternatives = 1;
@@ -631,7 +687,7 @@ function startWakeWord() {
     for (let index = event.resultIndex; index < event.results.length; index += 1) {
       const result = event.results[index];
       if (!result.isFinal) continue;
-      const transcript = String(result[0] && result[0].transcript || '').trim();
+      const transcript = correctSpeechTranscript(String(result[0] && result[0].transcript || '').trim());
       if (!transcript) continue;
       if (!featureState.wakeArmed) {
         const wakeMatch = transcript.match(/\bhey\s+dexter\b/i);
@@ -854,6 +910,36 @@ feature$('#speech-input-enabled').addEventListener('change', (event) => {
     feature$('#wake-word-enabled').checked = false;
   }
 });
+feature$('#assistant-language-style').value = featureState.assistantStyle;
+feature$('#assistant-language-style').addEventListener('change', (event) => {
+  featureState.assistantStyle = ['nigerian-igbo', 'plain-english', 'english-uk', 'english-us'].includes(event.target.value) ? event.target.value : 'nigerian-igbo';
+  persistFeatureSettings();
+});
+feature$('#speech-language').value = featureState.speechLocale;
+feature$('#speech-language').addEventListener('change', (event) => {
+  featureState.speechLocale = ['en-NG', 'ig-NG', 'en-GB', 'en-US'].includes(event.target.value) ? event.target.value : 'en-NG';
+  persistFeatureSettings();
+  if (featureState.wakeRecognition) {
+    try { featureState.wakeRecognition.stop(); } catch {}
+  }
+});
+feature$('#vocabulary-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const heard = feature$('#vocabulary-heard').value.trim();
+  const correct = feature$('#vocabulary-correct').value.trim();
+  if (!heard || !correct) return;
+  const existing = featureState.vocabulary.findIndex((item) => item.heard.toLocaleLowerCase() === heard.toLocaleLowerCase());
+  const entry = { heard: heard.slice(0, 80), correct: correct.slice(0, 80) };
+  if (existing >= 0) featureState.vocabulary.splice(existing, 1, entry);
+  else if (featureState.vocabulary.length < 30) featureState.vocabulary.push(entry);
+  else {
+    window.alert('You can save up to 30 personal speech corrections. Remove one before adding another.');
+    return;
+  }
+  persistFeatureSettings();
+  renderSpeechVocabulary();
+  feature$('#vocabulary-form').reset();
+});
 feature$('#wake-word-enabled').checked = featureState.wakeWordEnabled;
 feature$('#wake-word-enabled').addEventListener('change', (event) => {
   if (event.target.checked && !featureState.speechEnabled) {
@@ -907,6 +993,7 @@ renderCommands();
 renderRoutines();
 renderAnalytics();
 renderMusicQueue();
+renderSpeechVocabulary();
 if (featureState.wakeWordEnabled && featureState.speechEnabled && featureState.speechConsent) {
   setTimeout(startWakeWord, 1200);
 } else if (featureState.wakeWordEnabled) {

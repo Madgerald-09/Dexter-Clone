@@ -24,6 +24,7 @@ const settings = readJSON(SETTINGS_KEY, {});
 const state = {
   messages: Array.isArray(readJSON(STORAGE_KEY, [])) ? readJSON(STORAGE_KEY, []).slice(-120) : [],
   apps: [],
+  appMode: 'all',
   view: 'assistant',
   busy: false,
   useLocalModel: settings.useLocalModel === true,
@@ -32,7 +33,9 @@ const state = {
 };
 
 function saveSettings() {
+  const current = readJSON(SETTINGS_KEY, {});
   localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+    ...current,
     useLocalModel: state.useLocalModel,
     model: state.model,
     speakReplies: state.speakReplies,
@@ -103,7 +106,7 @@ function setView(view) {
   state.view = view;
   document.querySelectorAll('.view').forEach((element) => element.classList.toggle('active', element.id === 'view-' + view));
   document.querySelectorAll('.nav-button').forEach((element) => element.classList.toggle('active', element.dataset.view === view));
-  const titles = { assistant: 'Assistant', apps: 'Desktop', music: 'Music player', commands: 'Commands', routines: 'Routines', analytics: 'Activity', integrations: 'Integrations', overlay: 'Stream panel', settings: 'Settings' };
+  const titles = { assistant: 'Assistant', apps: 'Desktop', music: 'Music player', commands: 'Commands', routines: 'Routines', analytics: 'Activity', integrations: 'Integrations', overlay: 'Quick panel', settings: 'Settings' };
   const title = titles[view] || 'Assistant';
   $('#view-title').textContent = title;
   if (view === 'apps' && state.apps.length === 0) refreshApps();
@@ -115,14 +118,16 @@ function normalizeName(value) {
 
 function renderApps() {
   const filter = normalizeName(appSearch.value);
-  const visible = state.apps.filter((app) => normalizeName(app.name).includes(filter));
+  const codingApp = /(visual studio|vs code|vscode|cursor|codeium|intellij|pycharm|webstorm|rider|eclipse|sublime text|notepad\+\+|windows terminal|terminal|powershell)/i;
+  const eligible = state.apps.filter((app) => state.appMode !== 'coding' || codingApp.test(app.name));
+  const visible = eligible.filter((app) => normalizeName(app.name).includes(filter));
   appListElement.replaceChildren();
-  $('#apps-count').textContent = state.apps.length + (state.apps.length === 1 ? ' app found' : ' apps found') + (filter ? ' · ' + visible.length + ' shown' : '');
+  $('#apps-count').textContent = state.appMode === 'coding' ? visible.length + ' coding app' + (visible.length === 1 ? '' : 's') + ' found' : state.apps.length + (state.apps.length === 1 ? ' app found' : ' apps found') + (filter ? ' · ' + visible.length + ' shown' : '');
 
   if (!visible.length) {
     const empty = document.createElement('div');
     empty.className = 'empty-apps';
-    empty.textContent = state.apps.length ? 'No apps match your search.' : 'No Start menu apps were found.';
+    empty.textContent = state.appMode === 'coding' ? 'No likely code editors or terminals were found. Type in the search box to show all matching installed apps.' : state.apps.length ? 'No apps match your search.' : 'No Start menu apps were found.';
     appListElement.append(empty);
     return;
   }
@@ -180,23 +185,50 @@ async function openApp(app) {
 }
 
 function helpText() {
-  return 'Dexter Local runs without a paid account or cloud AI. Try:\n\n• list apps / open app Notepad\n• open folder / screenshot\n• read clipboard / copy to clipboard: your text\n• battery status / list running apps / list monitors\n• focus settings / lock computer / turn displays off\n• open calendar / read calendar (.ics) / play music\n• show commands / show routines / show integrations / show analytics\n• what time is it\n\nOther features: local music queue, custom command aliases, multi-step routines, local activity stats, OBS Studio controls, optional speech input and output, an always-on-top quick panel, and optional local Ollama chat. See the tabs in the sidebar.';
+  return 'Dexter Local runs without a paid account or cloud AI. Try:\n\n• list apps / open app Notepad\n• open folder / screenshot\n• read clipboard / copy to clipboard: your text\n• battery status / list running apps / list monitors\n• focus settings / lock computer / turn displays off\n• open calendar / read calendar (.ics) / play music\n• show commands / show routines / show integrations / show analytics\n• what time is it (Africa/Lagos)\n\nOther features: coding and everyday laptop help, local music, custom command shortcuts, routines, local activity totals, optional OBS controls, speech settings for Nigerian English or Igbo, personal transcript corrections, an always-on-top quick panel, and optional local Ollama chat. See the tabs in the sidebar.';
+}
+
+function normalizeEverydayCommand(text) {
+  const original = String(text || '').trim();
+  const phrase = original.toLocaleLowerCase().replace(/[.!?]+$/g, '').trim();
+  const dialectCommands = new Map([
+    ['wetin dey run', 'list running apps'],
+    ['wetin dey happen', 'list running apps'],
+    ['wetin time e be', 'what time is it'],
+    ['wetin be the time', 'what time is it'],
+    ['battery dey how', 'battery status'],
+    ['how far battery', 'battery status'],
+  ]);
+  if (dialectCommands.has(phrase)) return dialectCommands.get(phrase);
+  return original
+    .replace(/^(?:(?:abeg|biko|please|kindly)\s+)+/i, '')
+    .replace(/\s+(?:(?:abeg|biko|please|kindly))[.!?]*$/i, '')
+    .trim();
 }
 
 async function runDesktopCommand(text) {
-  const clean = text.trim();
+  const clean = normalizeEverydayCommand(text);
   const normalized = clean.toLocaleLowerCase();
 
   if (window.dexterFeatures) {
-    const alias = window.dexterFeatures.resolveAlias(clean);
+    const alias = window.dexterFeatures.resolveAlias(text.trim()) || window.dexterFeatures.resolveAlias(clean);
     if (alias) return runDesktopCommand(alias);
     const extended = await window.dexterFeatures.runCommand(clean);
     if (extended !== null && extended !== undefined) return extended;
   }
 
+  if (/^(?:find|show|list|open)\s+(?:(?:my|a)\s+)?(?:code|coding)\s+(?:editor|apps?|tools?)[.!? ]*$/i.test(clean)) {
+    state.appMode = 'coding';
+    appSearch.value = '';
+    await refreshApps();
+    setView('apps');
+    const codingApp = /(visual studio|vs code|vscode|cursor|codeium|intellij|pycharm|webstorm|rider|eclipse|sublime text|notepad\+\+|windows terminal|terminal|powershell)/i;
+    const count = state.apps.filter((app) => codingApp.test(app.name)).length;
+    return count ? 'I found ' + count + ' likely coding app' + (count === 1 ? '' : 's') + ' in your Start menu. Choose the one you use.' : 'I could not identify a code editor by name. I opened the installed-app list so you can search for yours.';
+  }
   if (/^(help|commands?|what can you do)[.!? ]*$/.test(normalized)) return helpText();
   if (/\b(?:what time is it|current time|what's the time)\b/.test(normalized)) {
-    return 'It is ' + new Date().toLocaleString() + ' on this computer.';
+    return 'It is ' + new Intl.DateTimeFormat('en-NG', { dateStyle: 'full', timeStyle: 'short', timeZone: 'Africa/Lagos' }).format(new Date()) + ' in Nigeria (WAT).';
   }
   if (/\b(?:list|show|find)\b.*\b(?:installed )?apps?\b/.test(normalized) || normalized === 'apps') {
     await refreshApps();
@@ -243,23 +275,25 @@ async function runDesktopCommand(text) {
 async function sendMessage(text) {
   const content = String(text || '').trim();
   if (!content || state.busy) return;
-  const sensitiveUserCommand = /^read calendar$|^(?:list|show) running apps$/i.test(content) || /^(?:read|show|what(?:'s| is) in)\s+(?:my\s+)?clipboard|^(?:copy|put)\s+(?:to\s+)?clipboard\b/i.test(content);
+  const commandText = normalizeEverydayCommand(content);
+  const sensitiveUserCommand = /^read calendar$|^(?:list|show) running apps$/i.test(commandText) || /^(?:read|show|what(?:'s| is) in)\s+(?:my\s+)?clipboard|^(?:copy|put)\s+(?:to\s+)?clipboard\b/i.test(commandText);
   addMessage('user', content, { sensitive: sensitiveUserCommand });
   chatInput.value = '';
   chatInput.style.height = 'auto';
   setBusy(true);
   try {
-    const commandResult = await runDesktopCommand(content);
+    const commandResult = await runDesktopCommand(commandText);
     if (commandResult !== null) {
       if (window.dexterFeatures) window.dexterFeatures.recordAction('command', 'Desktop action');
-      const sensitive = /^read calendar$|^(?:list|show) running apps$/i.test(content) || (/^(?:read|show|what(?:'s| is) in)\s+(?:my\s+)?clipboard/i.test(content) && commandResult !== 'Your clipboard is empty.');
+      const sensitive = /^read calendar$|^(?:list|show) running apps$/i.test(commandText) || (/^(?:read|show|what(?:'s| is) in)\s+(?:my\s+)?clipboard/i.test(commandText) && commandResult !== 'Your clipboard is empty.');
       addMessage('assistant', commandResult, { sensitive });
     } else if (state.useLocalModel && state.model.trim()) {
       const history = state.messages
         .filter((message) => !message.sensitive && ['user', 'assistant'].includes(message.role))
         .slice(-18)
         .map(({ role, content: messageContent }) => ({ role, content: messageContent }));
-      const answer = await window.dexter.askLocalModel({ model: state.model.trim(), messages: history });
+      const assistantStyle = window.dexterFeatures ? window.dexterFeatures.getAssistantStyle() : 'nigerian-igbo';
+      const answer = await window.dexter.askLocalModel({ model: state.model.trim(), messages: history, assistantStyle });
       addMessage('assistant', answer);
     } else if (state.useLocalModel) {
       addMessage('assistant', 'Add the name of a model already installed in Ollama in Settings, then try again.');
@@ -323,7 +357,8 @@ chatInput.addEventListener('input', () => {
 });
 
 $('#refresh-apps').addEventListener('click', refreshApps);
-appSearch.addEventListener('input', renderApps);
+appSearch.addEventListener('input', () => { state.appMode = 'all'; renderApps(); });
+$('#show-all-apps').addEventListener('click', () => { state.appMode = 'all'; appSearch.value = ''; renderApps(); });
 
 $('#local-ai-enabled').checked = state.useLocalModel;
 $('#model-name').value = state.model;

@@ -202,6 +202,16 @@ register('local-model:chat', async (request) => {
     return { role: message.role, content: message.content };
   });
 
+  const assistantStyles = {
+    'nigerian-igbo': 'You are helping an everyday Windows laptop user in Nigeria who is Igbo and codes. Give practical help with programming and normal laptop use. Use clear, natural Nigerian English, understand Nigerian expressions and English/Igbo code-switching when you can, and answer in Igbo only when you are confident. Do not imitate an accent, force slang, or invent Igbo translations; ask when a phrase is unclear. Do not assume the user streams. Use Africa/Lagos when answering local time questions.',
+    'plain-english': 'Use clear, straightforward English and focus on practical programming and everyday Windows laptop tasks.',
+    'english-uk': 'Use clear English with UK spelling and phrasing. Focus on practical programming and everyday Windows laptop tasks.',
+    'english-us': 'Use clear English with US spelling and phrasing. Focus on practical programming and everyday Windows laptop tasks.',
+  };
+  const assistantStyle = typeof request.assistantStyle === 'string' && assistantStyles[request.assistantStyle]
+    ? assistantStyles[request.assistantStyle]
+    : assistantStyles['nigerian-igbo'];
+
   const response = await fetch('http://127.0.0.1:11434/api/chat', {
     method: 'POST',
     redirect: 'error',
@@ -213,7 +223,7 @@ register('local-model:chat', async (request) => {
       messages: [
         {
           role: 'system',
-          content: 'You are Dexter Local, a helpful personal desktop assistant. You run on the user’s own computer. Never claim that you performed a computer action. This chat cannot run tools or commands. For desktop actions, explain that the user can use the built-in commands: list apps, open app <name>, open folder, screenshot, read clipboard, or copy to clipboard <text>.',
+          content: 'You are Dexter Local, a helpful personal desktop assistant. ' + assistantStyle + ' You run on the user’s own computer. Never claim that you performed a computer action. This chat cannot run tools or commands. For desktop actions, explain that the user can use the built-in commands: list apps, open app <name>, open folder, screenshot, read clipboard, or copy to clipboard <text>.',
         },
         ...messages,
       ],
@@ -547,10 +557,10 @@ function createOverlayWindow() {
   }
   overlayWindow = new BrowserWindow({
     width: 390,
-    height: 330,
+    height: 385,
     minWidth: 340,
     minHeight: 280,
-    title: 'Dexter Stream Panel',
+    title: 'Dexter Quick Panel',
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -590,7 +600,7 @@ register('window:focus-main', async () => {
   return { focused: true };
 });
 register('overlay:command', async (command) => {
-  const allowed = new Set(['list apps', 'open folder', 'screenshot', 'help']);
+  const allowed = new Set(['list apps', 'find my code editor', 'open folder', 'screenshot', 'help']);
   if (typeof command !== 'string' || !allowed.has(command)) throw new Error('That quick action is not available.');
   if (!mainWindow || mainWindow.isDestroyed()) createWindow();
   mainWindow.show();
