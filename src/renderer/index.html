@@ -3,11 +3,12 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
     <meta name="theme-color" content="#0d1117">
     <title>Dexter Local</title>
     <link rel="stylesheet" href="styles.css">
     <script src="app.js" defer></script>
+    <script src="features.js" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -22,7 +23,13 @@
         <div class="nav-label">WORKSPACE</div>
         <nav class="side-nav" aria-label="Main navigation">
           <button class="nav-button active" data-view="assistant" type="button"><span class="nav-icon">✦</span> Assistant</button>
-          <button class="nav-button" data-view="apps" type="button"><span class="nav-icon">▦</span> Desktop apps</button>
+          <button class="nav-button" data-view="apps" type="button"><span class="nav-icon">▦</span> Desktop</button>
+          <button class="nav-button" data-view="music" type="button"><span class="nav-icon">♫</span> Music</button>
+          <button class="nav-button" data-view="commands" type="button"><span class="nav-icon">⌘</span> Commands</button>
+          <button class="nav-button" data-view="routines" type="button"><span class="nav-icon">↗</span> Routines</button>
+          <button class="nav-button" data-view="analytics" type="button"><span class="nav-icon">▤</span> Analytics</button>
+          <button class="nav-button" data-view="integrations" type="button"><span class="nav-icon">⛓</span> Integrations</button>
+          <button class="nav-button" data-view="overlay" type="button"><span class="nav-icon">▣</span> Stream panel</button>
           <button class="nav-button" data-view="settings" type="button"><span class="nav-icon">⚙</span> Settings</button>
         </nav>
 
@@ -33,7 +40,7 @@
           </div>
           <div class="profile-row">
             <div class="profile-avatar">G</div>
-            <div class="profile-copy"><strong>Personal workspace</strong><small id="version-label">Version 0.1.0</small></div>
+            <div class="profile-copy"><strong>Personal workspace</strong><small id="version-label">Version 0.2.0</small></div>
             <span class="profile-menu" aria-hidden="true">···</span>
           </div>
         </div>
@@ -42,7 +49,7 @@
       <main class="main-area">
         <header class="topbar">
           <div class="breadcrumbs"><span>Workspace</span><span class="crumb-sep">/</span><strong id="view-title">Assistant</strong></div>
-          <div class="topbar-right"><span class="local-badge"><span></span> LOCAL ONLY</span><button class="icon-button" id="clear-chat" title="Clear conversation" aria-label="Clear conversation" type="button">⌫</button></div>
+          <div class="topbar-right"><span class="voice-top-status" id="voice-top-status" hidden><i></i> MIC ON</span><span class="local-badge"><span></span> LOCAL BY DEFAULT</span><button class="icon-button" id="clear-chat" title="Clear conversation" aria-label="Clear conversation" type="button">⌫</button></div>
         </header>
 
         <section class="view active" id="view-assistant" aria-label="Assistant">
@@ -66,18 +73,108 @@
             <form class="composer" id="chat-form">
               <label class="sr-only" for="chat-input">Message Dexter</label>
               <textarea id="chat-input" rows="1" maxlength="6000" placeholder="Ask Dexter or type a desktop command…"></textarea>
-              <div class="composer-tools"><span class="composer-hint"><kbd>Enter</kbd> to send <span>·</span> <kbd>Shift + Enter</kbd> for a new line</span><button class="send-button" id="send-button" type="submit" aria-label="Send message"><span>Send</span><span aria-hidden="true">↑</span></button></div>
+              <div class="composer-tools"><span class="composer-hint"><kbd>Enter</kbd> to send <span>·</span> <kbd>Shift + Enter</kbd> for a new line</span><div class="composer-buttons"><button class="voice-button" id="voice-button" type="button" aria-label="Start voice input" title="Voice input (Ctrl+Shift+Space)">◉</button><button class="send-button" id="send-button" type="submit" aria-label="Send message"><span>Send</span><span aria-hidden="true">↑</span></button></div></div>
             </form>
+            <div class="voice-status" id="voice-status" hidden>Microphone active · voice recognition may use an online service</div>
             <div class="composer-footnote"><span class="shield-icon">◇</span> Desktop commands run only after you ask. Chat stays on this device.</div>
           </div>
         </section>
 
         <section class="view" id="view-apps" aria-label="Desktop apps">
           <div class="page-content">
-            <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> YOUR COMPUTER</div><h1>Desktop apps</h1><p>Find and open apps registered in the Windows Start menu.</p></div><button class="secondary-button" id="refresh-apps" type="button"><span>↻</span> Refresh list</button></div>
+            <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> YOUR COMPUTER</div><h1>Desktop control</h1><p>Manage common desktop actions and launch apps from the Windows Start menu.</p></div><button class="secondary-button" id="refresh-apps" type="button"><span>↻</span> Refresh apps</button></div>
+            <div class="system-actions-grid">
+              <button class="system-action-card" data-system-action="notifications" type="button"><span class="system-action-icon amber">☼</span><span><strong>Focus &amp; notifications</strong><small>Open Windows notification settings</small></span><span class="prompt-arrow">↗</span></button>
+              <button class="system-action-card" data-system-action="lock" type="button"><span class="system-action-icon violet">▣</span><span><strong>Lock this computer</strong><small>Confirm before locking Windows</small></span><span class="prompt-arrow">↗</span></button>
+              <button class="system-action-card" data-system-action="display-off" type="button"><span class="system-action-icon blue">◉</span><span><strong>Turn displays off</strong><small>Confirm first; mouse or key wakes them</small></span><span class="prompt-arrow">↗</span></button>
+              <button class="system-action-card" data-system-query="battery" type="button"><span class="system-action-icon green">▰</span><span><strong>Battery status</strong><small>Read local battery information</small></span><span class="prompt-arrow">↗</span></button>
+              <button class="system-action-card" data-system-query="monitors" type="button"><span class="system-action-icon blue">▣</span><span><strong>Displays</strong><small>List connected screens</small></span><span class="prompt-arrow">↗</span></button>
+              <button class="system-action-card" data-system-query="running-apps" type="button"><span class="system-action-icon violet">▦</span><span><strong>Running apps</strong><small>List visible Windows windows</small></span><span class="prompt-arrow">↗</span></button>
+              <button class="system-action-card" data-system-open-calendar="true" type="button"><span class="system-action-icon blue">▦</span><span><strong>Calendar app</strong><small>Find a calendar app to open</small></span><span class="prompt-arrow">↗</span></button>
+              <button class="system-action-card" data-calendar-read="true" type="button"><span class="system-action-icon amber">▤</span><span><strong>Read a local calendar</strong><small>Choose an .ics calendar file</small></span><span class="prompt-arrow">↗</span></button>
+            </div>
+            <div class="system-result" id="system-result" hidden></div>
+            <div class="apps-section-heading"><strong>Installed apps</strong><span>Windows Start menu</span></div>
             <div class="app-search-wrap"><span aria-hidden="true">⌕</span><input id="app-search" type="search" placeholder="Search your installed apps…"><kbd>⌘ K</kbd></div>
             <div class="apps-summary"><span id="apps-count">Apps are loaded only when you open this page.</span><span class="local-tag">ON DEVICE</span></div>
             <div class="app-list" id="app-list"></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-music" aria-label="Music player">
+          <div class="page-content music-content">
+            <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> LOCAL AUDIO</div><h1>Music player</h1><p>Play audio files from this computer. No streaming account or subscription needed.</p></div><button class="primary-button" id="choose-music" type="button"><span>＋</span> Add music</button></div>
+            <input id="music-file-input" class="sr-only" type="file" accept="audio/*" multiple>
+            <audio id="local-audio" preload="metadata"></audio>
+            <div class="music-player-card">
+              <div class="album-art" id="album-art"><span>♫</span><i></i><b></b></div>
+              <div class="now-playing"><div class="eyebrow"><span class="eyebrow-line"></span> NOW PLAYING</div><h2 id="music-title">Choose local audio files</h2><p id="music-subtitle">Your queue stays in this session.</p></div>
+              <div class="music-controls">
+                <div class="music-seek-row"><span id="music-current-time">0:00</span><input id="music-seek" type="range" min="0" max="1000" value="0" aria-label="Seek"><span id="music-duration">0:00</span></div>
+                <div class="music-buttons"><button id="music-previous" class="round-control" type="button" aria-label="Previous track">|◀</button><button id="music-play" class="play-control" type="button" aria-label="Play">▶</button><button id="music-next" class="round-control" type="button" aria-label="Next track">▶|</button><button id="music-loop" class="round-control loop-control" type="button" aria-label="Repeat">↻</button><span class="volume-icon">◖</span><input id="music-volume" type="range" min="0" max="1" step="0.01" value="0.75" aria-label="Volume"></div>
+              </div>
+            </div>
+            <div class="apps-section-heading"><strong>Queue</strong><span id="music-count">0 tracks</span></div>
+            <div class="music-queue" id="music-queue"><div class="empty-apps">Add local audio files to start a queue.</div></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-commands" aria-label="Commands">
+          <div class="page-content">
+            <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> PERSONAL SHORTCUTS</div><h1>Commands</h1><p>Save phrases that run one of Dexter Local’s built-in, restricted desktop actions.</p></div></div>
+            <form class="builder-card" id="command-form">
+              <label class="field-label" for="command-alias">Shortcut phrase</label><input class="text-input full-width" id="command-alias" maxlength="80" required placeholder="e.g. Open my notes">
+              <label class="field-label" for="command-action">Built-in command</label><input class="text-input full-width" id="command-action" maxlength="160" required placeholder="e.g. open app Notepad">
+              <div class="builder-footer"><span>Only the listed local command patterns can run. No custom shell commands.</span><button class="primary-button" type="submit">Save command</button></div>
+            </form>
+            <div class="apps-section-heading"><strong>My commands</strong><span id="command-count">0 shortcuts</span></div>
+            <div class="saved-list" id="command-list"><div class="empty-apps">No custom commands yet.</div></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-routines" aria-label="Routines">
+          <div class="page-content">
+            <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> MULTI-STEP WORKFLOWS</div><h1>Routines</h1><p>Build repeatable sequences from approved local commands. Routines run only when you press Run.</p></div></div>
+            <form class="builder-card" id="routine-form">
+              <label class="field-label" for="routine-name">Routine name</label><input class="text-input full-width" id="routine-name" maxlength="80" required placeholder="e.g. Start my workday">
+              <label class="field-label" for="routine-steps">One supported command per line</label><textarea class="text-input routine-textarea" id="routine-steps" maxlength="1200" required placeholder="open app Notepad&#10;open folder&#10;what time is it"></textarea>
+              <div class="builder-help">Supported: open app &lt;exact name&gt;, open folder, list apps, screenshot, focus settings, what time is it.</div>
+              <div class="builder-footer"><span>Folder and screenshot steps will ask you where to save or what to open.</span><button class="primary-button" type="submit">Save routine</button></div>
+            </form>
+            <div class="apps-section-heading"><strong>My routines</strong><span id="routine-count">0 routines</span></div>
+            <div class="saved-list" id="routine-list"><div class="empty-apps">No routines yet.</div></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-analytics" aria-label="Local analytics">
+          <div class="page-content">
+            <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> ON-DEVICE ONLY</div><h1>Activity</h1><p>Private usage totals stored on this computer. Nothing is sent anywhere.</p></div><button id="clear-activity" class="secondary-button danger-button" type="button">Clear activity</button></div>
+            <div class="analytics-grid"><article class="metric-card"><span>Commands run</span><strong id="metric-commands">0</strong><small>Since activity history was cleared</small></article><article class="metric-card"><span>Apps opened</span><strong id="metric-apps">0</strong><small>From the desktop app list</small></article><article class="metric-card"><span>Routines run</span><strong id="metric-routines">0</strong><small>Manual runs only</small></article><article class="metric-card"><span>Music tracks played</span><strong id="metric-music">0</strong><small>Local audio files</small></article></div>
+            <div class="apps-section-heading"><strong>Recent activity</strong><span>Saved locally</span></div>
+            <div class="saved-list activity-list" id="activity-list"><div class="empty-apps">No activity recorded yet.</div></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-integrations" aria-label="Integrations">
+          <div class="page-content">
+            <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> LOCAL CONNECTIONS</div><h1>Integrations</h1><p>Connect desktop software running on this computer. Passwords are used only for the current session.</p></div></div>
+            <article class="integration-card"><div class="integration-heading"><div class="integration-logo obs-logo">OBS</div><div class="integration-copy"><strong>OBS Studio</strong><p>Scenes, stream and recording controls, and audio input mute. Requires OBS WebSocket enabled locally.</p></div><span class="integration-status" id="obs-status-chip">DISCONNECTED</span></div>
+              <div class="obs-connection-form"><label class="field-label" for="obs-port">Local WebSocket port</label><input id="obs-port" class="text-input" type="number" min="1" max="65535" value="4455"><label class="field-label" for="obs-password">OBS password</label><input id="obs-password" class="text-input" type="password" maxlength="256" autocomplete="off" placeholder="Only needed if OBS requires it"><button id="obs-connect" class="primary-button" type="button">Connect</button><button id="obs-disconnect" class="secondary-button" type="button" disabled>Disconnect</button></div>
+              <div class="obs-controls" id="obs-controls" hidden><div class="obs-status-line" id="obs-summary">Connected to OBS.</div><div class="obs-control-row"><label class="field-label" for="obs-scenes">Program scene</label><select id="obs-scenes" class="text-input"></select><button id="obs-set-scene" class="secondary-button" type="button">Switch scene</button></div><div class="obs-control-row"><span class="field-label">Stream</span><span class="obs-output-state" id="obs-stream-state">Inactive</span><button id="obs-stream-toggle" class="secondary-button" type="button">Start stream</button></div><div class="obs-control-row"><span class="field-label">Recording</span><span class="obs-output-state" id="obs-record-state">Inactive</span><button id="obs-record-toggle" class="secondary-button" type="button">Start recording</button></div><div class="apps-section-heading"><strong>Audio inputs</strong><button id="obs-refresh" class="text-button" type="button">Refresh</button></div><div id="obs-inputs" class="obs-inputs"></div></div>
+              <div class="integration-footnote">The connection is restricted to 127.0.0.1. Enable the built-in WebSocket server in OBS → Tools → WebSocket Server Settings.</div>
+            </article>
+            <article class="integration-card"><div class="integration-heading"><div class="integration-logo ollama-logo">◉</div><div class="integration-copy"><strong>Ollama local AI</strong><p>Open-ended chat runs on your own computer. Model setup and controls are in Settings.</p></div><span class="integration-status local-status">LOOPBACK ONLY</span></div><button class="secondary-button" data-go-settings="true" type="button">Configure local model</button></article>
+            <article class="integration-card no-account-card"><div class="integration-logo green">◇</div><div class="integration-copy"><strong>No account or billing integration</strong><p>Cloud sign-in, subscriptions, and paid Dexter services are intentionally removed. Personal features work without an account.</p></div><span class="no-cost-label">FREE</span></article>
+          </div>
+        </section>
+
+        <section class="view" id="view-overlay" aria-label="Stream panel and overlay">
+          <div class="page-content">
+            <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> FLOATING DESKTOP OVERLAY</div><h1>Stream panel</h1><p>Keep quick actions above other windows while you stream or work.</p></div><button id="open-overlay" class="primary-button" type="button"><span>▣</span> Open floating panel</button></div>
+            <div class="overlay-preview"><div class="overlay-preview-top"><span class="privacy-dot"></span> DEXTER · ALWAYS ON TOP <span class="overlay-preview-menu">···</span></div><div class="overlay-preview-title">Your desktop, in reach.</div><div class="overlay-preview-actions"><span>List apps</span><span>Screenshot</span><span>Open folder</span></div><div class="overlay-shortcut"><kbd>Ctrl</kbd> <b>+</b> <kbd>Shift</kbd> <b>+</b> <kbd>O</kbd> <span>toggle panel</span></div></div>
+            <div class="settings-section-label">APPEARANCE</div>
+            <article class="setting-card"><div class="setting-icon violet">✦</div><div class="setting-copy"><strong>Accent color</strong><p>Personalize Dexter Local’s interface. Saved only on this device.</p></div><input id="accent-color" class="color-input" type="color" value="#8b7cff" aria-label="Accent color"></article>
+            <div class="settings-note"><span>ⓘ</span><p>The floating panel supports app discovery, screenshots, folder selection, and quick access to the main assistant. It does not listen continuously.</p></div>
           </div>
         </section>
 
@@ -96,13 +193,34 @@
               <div class="setting-icon green">♫</div><div class="setting-copy"><strong>Speak replies aloud</strong><p>Use a voice provided by Windows and Chromium. This feature does not send audio to a service.</p></div>
               <label class="switch"><input id="speak-replies" type="checkbox"><span></span><b class="sr-only">Speak replies aloud</b></label>
             </article>
+            <article class="setting-card voice-setting">
+              <div class="setting-icon amber">♩</div><div class="setting-copy"><strong>Enable speech input</strong><p>Voice dictation uses Chromium’s built-in speech recognition and may send audio to its recognition provider. Leave this off for fully local use. The microphone button and Ctrl+Shift+Space hotkey work only when enabled.</p></div>
+              <label class="switch"><input id="speech-input-enabled" type="checkbox"><span></span><b class="sr-only">Enable speech input</b></label>
+            </article>
+            <article class="setting-card voice-setting">
+              <div class="setting-icon amber">◉</div><div class="setting-copy"><strong>Wake phrase: “Hey Dexter”</strong><p>Optional continuous listening while the app is open. Audio may be processed by Chromium’s recognition provider. Say “Hey Dexter” then a command; Dexter puts the transcript in the box for you to review and send.</p></div>
+              <label class="switch"><input id="wake-word-enabled" type="checkbox"><span></span><b class="sr-only">Enable wake phrase</b></label>
+            </article>
+            <article class="setting-card">
+              <div class="setting-icon violet">✧</div><div class="setting-copy"><strong>Animated assistant companion</strong><p>Show a small animated Dexter companion in the corner of the app.</p></div><label class="switch"><input id="companion-enabled" type="checkbox"><span></span><b class="sr-only">Show animated companion</b></label>
+            </article>
+            <article class="setting-card">
+              <div class="setting-icon blue">◷</div><div class="setting-copy"><strong>Floating panel shortcut</strong><p>Show or hide the always-on-top quick panel with Ctrl+Shift+O.</p></div><button id="open-overlay-settings" class="secondary-button" type="button">Open panel</button>
+            </article>
             <div class="settings-section-label data-label">DATA &amp; PRIVACY</div>
             <article class="setting-card privacy-setting">
               <div class="setting-icon amber">◇</div><div class="setting-copy"><strong>Your chat is stored on this device</strong><p>Conversation history uses this app's local browser storage. Clipboard text is not saved into history. Clear it whenever you want.</p></div><button class="secondary-button danger-button" id="clear-chat-settings" type="button">Clear chat history</button>
             </article>
+            <article class="setting-card privacy-setting">
+              <div class="setting-icon blue">⇩</div><div class="setting-copy"><strong>Local diagnostics export</strong><p>Export only app/runtime versions and platform information. It does not include chat, clipboard, passwords, filenames, or account data.</p></div><button id="export-diagnostics" class="secondary-button" type="button">Export file</button>
+            </article>
+            <article class="setting-card privacy-setting">
+              <div class="setting-icon green">↗</div><div class="setting-copy"><strong>App updates</strong><p>Updates are manual and open source. Visit the project repository to review and download the latest code.</p></div><button id="open-project" class="secondary-button" type="button">Open GitHub</button>
+            </article>
             <div class="settings-note"><span>ⓘ</span><p>Dexter Local has no analytics, sign-in, or automatic uploads. Screenshots are written only to a location you choose.</p></div>
           </div>
         </section>
+        <button id="companion-widget" class="companion-widget" type="button" aria-label="Open Dexter assistant"><span class="companion-spark">✦</span><span>Dexter</span></button>
       </main>
     </div>
   </body>

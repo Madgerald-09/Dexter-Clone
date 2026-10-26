@@ -103,7 +103,8 @@ function setView(view) {
   state.view = view;
   document.querySelectorAll('.view').forEach((element) => element.classList.toggle('active', element.id === 'view-' + view));
   document.querySelectorAll('.nav-button').forEach((element) => element.classList.toggle('active', element.dataset.view === view));
-  const title = view === 'assistant' ? 'Assistant' : view === 'apps' ? 'Desktop apps' : 'Settings';
+  const titles = { assistant: 'Assistant', apps: 'Desktop', music: 'Music player', commands: 'Commands', routines: 'Routines', analytics: 'Activity', integrations: 'Integrations', overlay: 'Stream panel', settings: 'Settings' };
+  const title = titles[view] || 'Assistant';
   $('#view-title').textContent = title;
   if (view === 'apps' && state.apps.length === 0) refreshApps();
 }
@@ -179,20 +180,27 @@ async function openApp(app) {
 }
 
 function helpText() {
-  return 'I work without a paid account or cloud API. Try one of these commands:\n\n• list apps — find installed Windows apps\n• open app Notepad — open an exact app match\n• open folder — choose a folder to open in Explorer\n• screenshot — save a capture of your primary display\n• read clipboard — show clipboard text for this session only\n• copy to clipboard: your text — copy text\n• what time is it — show the current time\n\nFor open-ended chat, optionally enable a local Ollama model in Settings.';
+  return 'Dexter Local runs without a paid account or cloud AI. Try:\n\n• list apps / open app Notepad\n• open folder / screenshot\n• read clipboard / copy to clipboard: your text\n• battery status / list running apps / list monitors\n• focus settings / lock computer / turn displays off\n• open calendar / read calendar (.ics) / play music\n• show commands / show routines / show integrations / show analytics\n• what time is it\n\nOther features: local music queue, custom command aliases, multi-step routines, local activity stats, OBS Studio controls, optional speech input and output, an always-on-top quick panel, and optional local Ollama chat. See the tabs in the sidebar.';
 }
 
 async function runDesktopCommand(text) {
   const clean = text.trim();
   const normalized = clean.toLocaleLowerCase();
 
+  if (window.dexterFeatures) {
+    const alias = window.dexterFeatures.resolveAlias(clean);
+    if (alias) return runDesktopCommand(alias);
+    const extended = await window.dexterFeatures.runCommand(clean);
+    if (extended !== null && extended !== undefined) return extended;
+  }
+
   if (/^(help|commands?|what can you do)[.!? ]*$/.test(normalized)) return helpText();
   if (/\b(?:what time is it|current time|what's the time)\b/.test(normalized)) {
     return 'It is ' + new Date().toLocaleString() + ' on this computer.';
   }
   if (/\b(?:list|show|find)\b.*\b(?:installed )?apps?\b/.test(normalized) || normalized === 'apps') {
-    setView('apps');
     await refreshApps();
+    setView('apps');
     return 'I loaded your Windows Start menu apps. Search the list and press Open beside an app.';
   }
   if (/^(?:open|show)\s+(?:(?:a|the)\s+)?folder\s*[.!?]*$/i.test(clean)) {
@@ -201,7 +209,7 @@ async function runDesktopCommand(text) {
   }
   if (/\b(?:screenshot|capture (?:the )?screen|take (?:a )?screenshot)\b/i.test(clean)) {
     const result = await window.dexter.saveScreenshot();
-    return result.canceled ? 'Screenshot canceled.' : 'Saved your screenshot to ' + result.filePath + '.';
+    return result.canceled ? 'Screenshot canceled.' : 'Saved your screenshot to the location you selected.';
   }
   if (/^(?:read|show|what(?:'s| is) in)\s+(?:my\s+)?clipboard[?!. ]*$/i.test(clean)) {
     const clipboardText = await window.dexter.readClipboard();
@@ -235,14 +243,16 @@ async function runDesktopCommand(text) {
 async function sendMessage(text) {
   const content = String(text || '').trim();
   if (!content || state.busy) return;
-  addMessage('user', content);
+  const sensitiveUserCommand = /^read calendar$|^(?:list|show) running apps$/i.test(content) || /^(?:read|show|what(?:'s| is) in)\s+(?:my\s+)?clipboard|^(?:copy|put)\s+(?:to\s+)?clipboard\b/i.test(content);
+  addMessage('user', content, { sensitive: sensitiveUserCommand });
   chatInput.value = '';
   chatInput.style.height = 'auto';
   setBusy(true);
   try {
     const commandResult = await runDesktopCommand(content);
     if (commandResult !== null) {
-      const sensitive = /^(?:read|show|what(?:'s| is) in)\s+(?:my\s+)?clipboard/i.test(content) && commandResult !== 'Your clipboard is empty.';
+      if (window.dexterFeatures) window.dexterFeatures.recordAction('command', 'Desktop action');
+      const sensitive = /^read calendar$|^(?:list|show) running apps$/i.test(content) || (/^(?:read|show|what(?:'s| is) in)\s+(?:my\s+)?clipboard/i.test(content) && commandResult !== 'Your clipboard is empty.');
       addMessage('assistant', commandResult, { sensitive });
     } else if (state.useLocalModel && state.model.trim()) {
       const history = state.messages
@@ -321,6 +331,9 @@ $('#speak-replies').checked = state.speakReplies;
 $('#local-ai-enabled').addEventListener('change', (event) => { state.useLocalModel = event.target.checked; saveSettings(); });
 $('#model-name').addEventListener('input', (event) => { state.model = event.target.value.trim(); saveSettings(); });
 $('#speak-replies').addEventListener('change', (event) => { state.speakReplies = event.target.checked; saveSettings(); });
+
+window.dexterUI = Object.freeze({ sendMessage, addMessage, setView, refreshApps, runDesktopCommand });
+window.dexter.onOverlayCommand((command) => sendMessage(command));
 
 renderMessages();
 window.dexter.getVersion().then((version) => { $('#version-label').textContent = 'Version ' + version; }).catch(() => {});

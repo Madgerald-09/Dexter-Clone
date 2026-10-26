@@ -6,6 +6,7 @@ const {
   clipboard,
   desktopCapturer,
   dialog,
+  globalShortcut,
   ipcMain,
   nativeImage,
   screen,
@@ -13,16 +14,18 @@ const {
 } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const { promisify } = require('node:util');
+const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const execFileAsync = promisify(execFile);
 let mainWindow = null;
+let overlayWindow = null;
+const trustedWebContents = new Set();
 
 function assertTrustedRenderer(event) {
   if (
-    !mainWindow ||
-    event.sender !== mainWindow.webContents ||
+    !trustedWebContents.has(event.sender) ||
     event.senderFrame !== event.sender.mainFrame
   ) {
     throw new Error('This request did not come from Dexter Local.');
@@ -89,6 +92,58 @@ register('folder:choose-and-open', async () => {
   const error = await shell.openPath(result.filePaths[0]);
   if (error) throw new Error(error);
   return { opened: true };
+});
+
+register('calendar:read-local-file', async () => {
+  const selection = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose a local iCalendar file',
+    properties: ['openFile'],
+    filters: [{ name: 'iCalendar files', extensions: ['ics'] }],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return { canceled: true, events: [] };
+  const filePath = selection.filePaths[0];
+  const stat = await fs.stat(filePath);
+  if (stat.size > 5 * 1024 * 1024) throw new Error('Calendar file is larger than 5 MB.');
+  const source = (await fs.readFile(filePath, 'utf8')).replace(/^\uFEFF/, '');
+  const unfolded = source.split(/\r?\n/).reduce((lines, line) => {
+    if (/^[ \t]/.test(line) && lines.length) lines[lines.length - 1] += line.slice(1);
+    else lines.push(line);
+    return lines;
+  }, []);
+  const events = [];
+  let current = null;
+  for (const line of unfolded) {
+    if (line.toUpperCase() === 'BEGIN:VEVENT') { current = {}; continue; }
+    if (line.toUpperCase() === 'END:VEVENT') {
+      if (current && current.start) events.push(current);
+      current = null;
+      continue;
+    }
+    if (!current) continue;
+    const separator = line.indexOf(':');
+    if (separator < 0) continue;
+    const property = line.slice(0, separator).split(';')[0].toUpperCase();
+    const value = line.slice(separator + 1).replace(/\\n/gi, ' ').replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\\\/g, '\\');
+    if (property === 'SUMMARY') current.title = value.slice(0, 500);
+    if (property === 'LOCATION') current.location = value.slice(0, 500);
+    if (property === 'DTSTART') {
+      const match = value.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?$/);
+      if (match) {
+        const year = Number(match[1]), month = Number(match[2]) - 1, day = Number(match[3]);
+        current.allDay = !match[4];
+        current.start = match[4]
+          ? (match[7] ? new Date(Date.UTC(year, month, day, Number(match[4]), Number(match[5]), Number(match[6] || 0))) : new Date(year, month, day, Number(match[4]), Number(match[5]), Number(match[6] || 0)))
+          : new Date(year, month, day);
+      }
+    }
+  }
+  const now = new Date();
+  const upcoming = events
+    .filter((event) => event.start instanceof Date && !Number.isNaN(event.start.valueOf()) && event.start >= now)
+    .sort((a, b) => a.start - b.start)
+    .slice(0, 12)
+    .map((event) => ({ title: event.title || 'Untitled event', start: event.start.toISOString(), allDay: event.allDay === true, location: event.location || '' }));
+  return { canceled: false, events: upcoming };
 });
 
 register('clipboard:read', async () => clipboard.readText());
@@ -182,6 +237,372 @@ register('local-model:chat', async (request) => {
 });
 
 register('app:version', async () => app.getVersion());
+register('app:open-project', async () => {
+  await shell.openExternal('https://github.com/Madgerald-09/Dexter-Clone');
+  return { opened: true };
+});
+register('diagnostics:export', async () => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export private diagnostics',
+    defaultPath: path.join(app.getPath('documents'), 'dexter-local-diagnostics.json'),
+    filters: [{ name: 'JSON file', extensions: ['json'] }],
+  });
+  if (result.canceled || !result.filePath) return { canceled: true };
+  const report = {
+    app: 'Dexter Local',
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    node: process.versions.node,
+    platform: process.platform,
+    release: require('node:os').release(),
+    generatedAt: new Date().toISOString(),
+    included: 'Runtime version and platform only. Chat, clipboard, filenames, passwords, and account data are not included.',
+  };
+  await fs.writeFile(result.filePath, JSON.stringify(report, null, 2), 'utf8');
+  return { saved: true, filePath: result.filePath };
+});
+
+async function runPowerShell(script) {
+  const { stdout } = await execFileAsync(
+    'powershell.exe',
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
+    { encoding: 'utf8', windowsHide: true, timeout: 12000, maxBuffer: 4 * 1024 * 1024 },
+  );
+  const output = stdout.replace(/^\uFEFF/, '').trim();
+  if (!output) return [];
+  const parsed = JSON.parse(output);
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+
+register('system:query', async (kind) => {
+  if (process.platform !== 'win32') throw new Error('Windows system status is not available on this platform.');
+  if (kind === 'running-apps') {
+    const rows = await runPowerShell("$ErrorActionPreference='Stop'; Get-Process | Where-Object { $_.MainWindowTitle } | Select-Object -First 100 ProcessName,Id,MainWindowTitle | ConvertTo-Json -Compress");
+    return rows.map((row) => ({ name: String(row.ProcessName || ''), pid: Number(row.Id) || 0, title: String(row.MainWindowTitle || '') }));
+  }
+  if (kind === 'monitors') {
+    const rows = await runPowerShell("$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::AllScreens | Select-Object DeviceName,Primary,@{Name='Width';Expression={$_.Bounds.Width}},@{Name='Height';Expression={$_.Bounds.Height}} | ConvertTo-Json -Compress");
+    return rows.map((row) => ({ name: String(row.DeviceName || 'Display'), primary: row.Primary === true || String(row.Primary).toLocaleLowerCase() === 'true', width: Number(row.Width) || 0, height: Number(row.Height) || 0 }));
+  }
+  if (kind === 'battery') {
+    const rows = await runPowerShell("$ErrorActionPreference='Stop'; Get-CimInstance Win32_Battery | Select-Object Name,EstimatedChargeRemaining,BatteryStatus | ConvertTo-Json -Compress");
+    return rows.map((row) => ({ name: String(row.Name || 'Battery'), percent: Number(row.EstimatedChargeRemaining), status: Number(row.BatteryStatus) }));
+  }
+  throw new Error('Unknown system information request.');
+});
+
+register('system:action', async (action) => {
+  if (process.platform !== 'win32') throw new Error('This Windows system action is not available on this platform.');
+  if (action === 'notifications') {
+    await shell.openExternal('ms-settings:notifications');
+    return { opened: true };
+  }
+  if (action === 'lock') {
+    const answer = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'Lock this computer?',
+      message: 'This will lock your Windows session immediately.',
+      buttons: ['Cancel', 'Lock now'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (answer.response !== 1) return { canceled: true };
+    const child = spawn('rundll32.exe', ['user32.dll,LockWorkStation'], { detached: true, stdio: 'ignore', windowsHide: true });
+    child.once('error', (error) => console.error('Could not lock Windows:', error.message));
+    child.unref();
+    return { locked: true };
+  }
+  if (action === 'display-off') {
+    const answer = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'Turn off your displays?',
+      message: 'Windows will turn off connected monitors. Move your mouse or press a key to wake them.',
+      buttons: ['Cancel', 'Turn displays off'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (answer.response !== 1) return { canceled: true };
+    const script = "$signature='[System.Runtime.InteropServices.DllImport(\"user32.dll\")] public static extern System.IntPtr SendMessage(System.IntPtr hWnd, uint msg, System.IntPtr wParam, System.IntPtr lParam);'; Add-Type -Namespace DexterLocal -Name DisplayControl -MemberDefinition $signature; [DexterLocal.DisplayControl]::SendMessage([System.IntPtr]::new(65535), 274, [System.IntPtr]::new(61808), [System.IntPtr]::new(2)) | Out-Null";
+    await execFileAsync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 8000 });
+    return { turnedOff: true };
+  }
+  throw new Error('Unknown system action.');
+});
+
+class ObsWebSocketClient {
+  constructor() {
+    this.socket = null;
+    this.connected = false;
+    this.pending = new Map();
+    this.connectResolve = null;
+    this.connectReject = null;
+    this.connectTimer = null;
+  }
+
+  disconnect() {
+    const socket = this.socket;
+    this.socket = null;
+    this.connected = false;
+    if (this.connectTimer) clearTimeout(this.connectTimer);
+    this.connectTimer = null;
+    if (this.connectReject) this.connectReject(new Error('OBS connection closed.'));
+    this.connectResolve = null;
+    this.connectReject = null;
+    this.pendingPassword = null;
+    for (const entry of this.pending.values()) {
+      clearTimeout(entry.timer);
+      entry.reject(new Error('OBS connection closed.'));
+    }
+    this.pending.clear();
+    if (socket && socket.readyState < 2) socket.close();
+  }
+
+  connect(port, password) {
+    this.disconnect();
+    if (typeof WebSocket === 'undefined') throw new Error('This Electron runtime does not include a WebSocket client.');
+    const numericPort = Number(port);
+    if (!Number.isInteger(numericPort) || numericPort < 1 || numericPort > 65535) throw new Error('Enter a valid OBS WebSocket port.');
+    if (typeof password !== 'string' || password.length > 256) throw new Error('OBS password is too long.');
+    this.pendingPassword = password;
+
+    return new Promise((resolve, reject) => {
+      this.connectResolve = resolve;
+      this.connectReject = reject;
+      this.connectTimer = setTimeout(() => {
+        const fail = this.connectReject;
+        this.connectReject = null;
+        this.connectResolve = null;
+        this.disconnect();
+        (fail || reject)(new Error('OBS did not identify within 8 seconds. Check the port, password, and WebSocket server setting.'));
+      }, 8000);
+      try {
+        this.socket = new WebSocket('ws://127.0.0.1:' + numericPort, 'obswebsocket.json');
+      } catch (error) {
+        clearTimeout(this.connectTimer);
+        this.connectTimer = null;
+        this.connectResolve = null;
+        this.connectReject = null;
+        reject(new Error('Could not connect to OBS: ' + error.message));
+        return;
+      }
+      this.socket.addEventListener('message', (event) => this.receive(event.data));
+      this.socket.addEventListener('error', () => {
+        if (!this.connected && this.connectReject) {
+          const fail = this.connectReject;
+          this.connectReject = null;
+          this.connectResolve = null;
+          if (this.connectTimer) clearTimeout(this.connectTimer);
+          this.connectTimer = null;
+          this.disconnect();
+          fail(new Error('Could not reach OBS on 127.0.0.1:' + numericPort + '.'));
+        }
+      });
+      this.socket.addEventListener('close', () => {
+        this.connected = false;
+        if (this.connectReject) {
+          const fail = this.connectReject;
+          this.connectReject = null;
+          this.connectResolve = null;
+          if (this.connectTimer) clearTimeout(this.connectTimer);
+          this.connectTimer = null;
+          fail(new Error('OBS closed the connection. Check its WebSocket settings and password.'));
+        }
+        for (const entry of this.pending.values()) {
+          clearTimeout(entry.timer);
+          entry.reject(new Error('OBS connection was closed.'));
+        }
+        this.pending.clear();
+      });
+    });
+  }
+
+  receive(raw) {
+    let message;
+    try {
+      message = JSON.parse(String(raw));
+    } catch {
+      this.disconnect();
+      return;
+    }
+    const data = message && message.d ? message.d : {};
+    if (message.op === 0) {
+      let authentication;
+      if (data.authentication) {
+        const password = this.pendingPassword;
+        if (typeof password !== 'string') {
+          this.disconnect();
+          return;
+        }
+        const secret = createHash('sha256').update(password + data.authentication.salt).digest('base64');
+        authentication = createHash('sha256').update(secret + data.authentication.challenge).digest('base64');
+      }
+      const identify = { rpcVersion: Math.min(Number(data.rpcVersion) || 1, 1), eventSubscriptions: 0 };
+      if (authentication) identify.authentication = authentication;
+      this.socket.send(JSON.stringify({ op: 1, d: identify }));
+      return;
+    }
+    if (message.op === 2) {
+      this.connected = true;
+      if (this.connectTimer) clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+      const resolve = this.connectResolve;
+      this.connectResolve = null;
+      this.connectReject = null;
+      this.pendingPassword = null;
+      if (resolve) resolve({ connected: true });
+      return;
+    }
+    if (message.op === 7 && data.requestId && this.pending.has(data.requestId)) {
+      const entry = this.pending.get(data.requestId);
+      this.pending.delete(data.requestId);
+      clearTimeout(entry.timer);
+      if (data.requestStatus && data.requestStatus.result) entry.resolve(data.responseData || {});
+      else entry.reject(new Error((data.requestStatus && data.requestStatus.comment) || 'OBS rejected that request.'));
+    }
+  }
+
+  request(requestType, requestData = {}) {
+    if (!this.connected || !this.socket || this.socket.readyState !== 1) return Promise.reject(new Error('Connect to OBS first.'));
+    const requestId = randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(new Error('OBS request timed out: ' + requestType));
+      }, 8000);
+      this.pending.set(requestId, { resolve, reject, timer });
+      try {
+        this.socket.send(JSON.stringify({ op: 6, d: { requestType, requestId, requestData } }));
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(requestId);
+        reject(error);
+      }
+    });
+  }
+}
+
+const obs = new ObsWebSocketClient();
+
+register('obs:connect', async (request) => {
+  if (!request || typeof request !== 'object') throw new Error('Enter the OBS WebSocket port and password.');
+  try {
+    return await obs.connect(request.port, typeof request.password === 'string' ? request.password : '');
+  } catch (error) {
+    obs.pendingPassword = null;
+    throw error;
+  }
+});
+register('obs:disconnect', async () => { obs.disconnect(); return { connected: false }; });
+register('obs:status', async () => {
+  if (!obs.connected) return { connected: false };
+  const [version, scenes, stream, recording, inputs] = await Promise.all([
+    obs.request('GetVersion'),
+    obs.request('GetSceneList'),
+    obs.request('GetStreamStatus'),
+    obs.request('GetRecordStatus'),
+    obs.request('GetInputList'),
+  ]);
+  const audioInputs = Array.isArray(inputs.inputs) ? inputs.inputs.slice(0, 32) : [];
+  const muteStates = await Promise.all(audioInputs.map((input) => obs.request('GetInputMute', { inputName: input.inputName }).catch(() => ({ inputMuted: false }))));
+  return {
+    connected: true,
+    obsVersion: version.obsVersion || '',
+    websocketVersion: version.obsWebSocketVersion || '',
+    scenes: Array.isArray(scenes.scenes) ? scenes.scenes.map((scene) => String(scene.sceneName || '')).filter(Boolean) : [],
+    currentScene: String(scenes.currentProgramSceneName || ''),
+    streaming: stream.outputActive === true,
+    recording: recording.outputActive === true,
+    inputs: audioInputs.map((input, index) => ({ name: String(input.inputName || ''), kind: String(input.inputKind || ''), muted: muteStates[index].inputMuted === true })).filter((input) => input.name),
+  };
+});
+register('obs:scene', async (sceneName) => {
+  if (typeof sceneName !== 'string' || sceneName.length > 256) throw new Error('Choose a scene from OBS.');
+  const scenes = await obs.request('GetSceneList');
+  const scene = Array.isArray(scenes.scenes) && scenes.scenes.find((item) => item.sceneName === sceneName);
+  if (!scene) throw new Error('That scene is not in the current OBS scene list.');
+  await obs.request('SetCurrentProgramScene', { sceneName });
+  return { sceneName };
+});
+register('obs:toggle-output', async (kind, active) => {
+  if (!['stream', 'record'].includes(kind) || typeof active !== 'boolean') throw new Error('Choose a valid OBS output action.');
+  const requestType = kind === 'stream' ? (active ? 'StartStream' : 'StopStream') : (active ? 'StartRecord' : 'StopRecord');
+  await obs.request(requestType);
+  return { kind, active };
+});
+register('obs:toggle-mute', async (inputName, muted) => {
+  if (typeof inputName !== 'string' || inputName.length > 256 || typeof muted !== 'boolean') throw new Error('Choose a valid OBS audio input.');
+  const inputs = await obs.request('GetInputList');
+  if (!Array.isArray(inputs.inputs) || !inputs.inputs.some((input) => input.inputName === inputName)) throw new Error('That input is no longer in the OBS input list.');
+  await obs.request('SetInputMute', { inputName, inputMuted: muted });
+  return { inputName, muted };
+});
+
+function createOverlayWindow() {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.show();
+    overlayWindow.focus();
+    return;
+  }
+  overlayWindow = new BrowserWindow({
+    width: 390,
+    height: 330,
+    minWidth: 340,
+    minHeight: 280,
+    title: 'Dexter Stream Panel',
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    backgroundColor: '#0d1117',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+    },
+  });
+  trustedWebContents.add(overlayWindow.webContents);
+  overlayWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  overlayWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+  overlayWindow.on('closed', () => {
+    if (overlayWindow) trustedWebContents.delete(overlayWindow.webContents);
+    overlayWindow = null;
+  });
+  overlayWindow.loadFile(path.join(__dirname, 'renderer', 'overlay.html'));
+}
+
+register('overlay:toggle', async () => {
+  if (overlayWindow && overlayWindow.isVisible()) overlayWindow.hide();
+  else createOverlayWindow();
+  return { visible: Boolean(overlayWindow && overlayWindow.isVisible()) };
+});
+register('overlay:close', async () => {
+  if (overlayWindow) overlayWindow.hide();
+  return { closed: true };
+});
+register('window:focus-main', async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  return { focused: true };
+});
+register('overlay:command', async (command) => {
+  const allowed = new Set(['list apps', 'open folder', 'screenshot', 'help']);
+  if (typeof command !== 'string' || !allowed.has(command)) throw new Error('That quick action is not available.');
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.send('overlay:command', command);
+  return { sent: true };
+});
+
+function toggleOverlay() {
+  if (overlayWindow && overlayWindow.isVisible()) overlayWindow.hide();
+  else createOverlayWindow();
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -201,17 +622,26 @@ function createWindow() {
       webSecurity: true,
     },
   });
+  trustedWebContents.add(mainWindow.webContents);
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
   mainWindow.once('ready-to-show', () => mainWindow && mainWindow.show());
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => {
+    if (mainWindow) trustedWebContents.delete(mainWindow.webContents);
+    mainWindow = null;
+  });
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
 app.whenReady().then(() => {
   app.setAppUserModelId('com.madgerald.dexter-local');
   createWindow();
+  globalShortcut.register('Control+Shift+O', toggleOverlay);
+  globalShortcut.register('Control+Shift+Space', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('voice:toggle');
+    else createWindow();
+  });
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -220,3 +650,5 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+app.on('will-quit', () => globalShortcut.unregisterAll());
