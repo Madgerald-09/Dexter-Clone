@@ -1,0 +1,326 @@
+'use strict';
+
+const STORAGE_KEY = 'dexter-local-chat-v1';
+const SETTINGS_KEY = 'dexter-local-settings-v1';
+const $ = (selector) => document.querySelector(selector);
+const messagesElement = $('#messages');
+const chatScroll = $('#chat-scroll');
+const welcomeBlock = $('#welcome-block');
+const chatInput = $('#chat-input');
+const sendButton = $('#send-button');
+const appListElement = $('#app-list');
+const appSearch = $('#app-search');
+
+function readJSON(key, fallback) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key));
+    return value && typeof value === 'object' ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const settings = readJSON(SETTINGS_KEY, {});
+const state = {
+  messages: Array.isArray(readJSON(STORAGE_KEY, [])) ? readJSON(STORAGE_KEY, []).slice(-120) : [],
+  apps: [],
+  view: 'assistant',
+  busy: false,
+  useLocalModel: settings.useLocalModel === true,
+  model: typeof settings.model === 'string' ? settings.model : '',
+  speakReplies: settings.speakReplies === true,
+};
+
+function saveSettings() {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+    useLocalModel: state.useLocalModel,
+    model: state.model,
+    speakReplies: state.speakReplies,
+  }));
+}
+
+function saveMessages() {
+  const safeMessages = state.messages.filter((message) => !message.sensitive).slice(-120);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(safeMessages));
+}
+
+function scrollToBottom() {
+  requestAnimationFrame(() => { chatScroll.scrollTop = chatScroll.scrollHeight; });
+}
+
+function speak(text) {
+  if (!state.speakReplies || !('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text.slice(0, 1200));
+  window.speechSynthesis.speak(utterance);
+}
+
+function renderMessage(message) {
+  const row = document.createElement('article');
+  row.className = 'message ' + (message.role === 'user' ? 'user-message' : 'assistant-message');
+  const avatar = document.createElement('div');
+  avatar.className = 'message-avatar ' + (message.role === 'user' ? 'user-avatar' : 'assistant-avatar');
+  avatar.textContent = message.role === 'user' ? 'G' : '✦';
+  const body = document.createElement('div');
+  body.className = 'message-body';
+  const author = document.createElement('div');
+  author.className = 'message-author';
+  author.textContent = message.role === 'user' ? 'You' : 'Dexter';
+  const content = document.createElement('p');
+  content.className = 'message-content';
+  content.textContent = message.content;
+  body.append(author, content);
+  row.append(avatar, body);
+  messagesElement.append(row);
+}
+
+function renderMessages() {
+  messagesElement.replaceChildren();
+  welcomeBlock.hidden = state.messages.some((message) => !message.sensitive);
+  for (const message of state.messages) renderMessage(message);
+  scrollToBottom();
+}
+
+function addMessage(role, content, options = {}) {
+  const message = { role, content: String(content), sensitive: options.sensitive === true };
+  state.messages.push(message);
+  while (state.messages.length > 120) state.messages.shift();
+  renderMessage(message);
+  welcomeBlock.hidden = true;
+  saveMessages();
+  if (role === 'assistant' && !message.sensitive) speak(message.content);
+  scrollToBottom();
+}
+
+function setBusy(busy) {
+  state.busy = busy;
+  sendButton.disabled = busy;
+  sendButton.innerHTML = busy ? '<span class="send-spinner"></span><span>Thinking</span>' : '<span>Send</span><span aria-hidden="true">↑</span>';
+  chatInput.disabled = busy;
+}
+
+function setView(view) {
+  state.view = view;
+  document.querySelectorAll('.view').forEach((element) => element.classList.toggle('active', element.id === 'view-' + view));
+  document.querySelectorAll('.nav-button').forEach((element) => element.classList.toggle('active', element.dataset.view === view));
+  const title = view === 'assistant' ? 'Assistant' : view === 'apps' ? 'Desktop apps' : 'Settings';
+  $('#view-title').textContent = title;
+  if (view === 'apps' && state.apps.length === 0) refreshApps();
+}
+
+function normalizeName(value) {
+  return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+function renderApps() {
+  const filter = normalizeName(appSearch.value);
+  const visible = state.apps.filter((app) => normalizeName(app.name).includes(filter));
+  appListElement.replaceChildren();
+  $('#apps-count').textContent = state.apps.length + (state.apps.length === 1 ? ' app found' : ' apps found') + (filter ? ' · ' + visible.length + ' shown' : '');
+
+  if (!visible.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-apps';
+    empty.textContent = state.apps.length ? 'No apps match your search.' : 'No Start menu apps were found.';
+    appListElement.append(empty);
+    return;
+  }
+
+  for (const [index, app] of visible.entries()) {
+    const row = document.createElement('article');
+    row.className = 'app-row';
+    const icon = document.createElement('div');
+    icon.className = 'app-icon app-icon-' + (index % 5);
+    icon.textContent = app.name.trim().charAt(0).toLocaleUpperCase();
+    const name = document.createElement('div');
+    name.className = 'app-row-name';
+    const strong = document.createElement('strong');
+    strong.textContent = app.name;
+    const small = document.createElement('small');
+    small.textContent = 'Windows app';
+    name.append(strong, small);
+    const open = document.createElement('button');
+    open.className = 'secondary-button app-open-button';
+    open.type = 'button';
+    open.textContent = 'Open';
+    open.addEventListener('click', () => openApp(app));
+    row.append(icon, name, open);
+    appListElement.append(row);
+  }
+}
+
+async function refreshApps() {
+  $('#apps-count').textContent = 'Reading the Windows Start menu…';
+  appListElement.replaceChildren();
+  const loading = document.createElement('div');
+  loading.className = 'empty-apps';
+  loading.textContent = 'Loading installed apps…';
+  appListElement.append(loading);
+  try {
+    state.apps = await window.dexter.listInstalledApps();
+    renderApps();
+  } catch (error) {
+    $('#apps-count').textContent = 'App list unavailable';
+    appListElement.replaceChildren();
+    const message = document.createElement('div');
+    message.className = 'empty-apps error-state';
+    message.textContent = error.message || 'Could not read the installed-app list.';
+    appListElement.append(message);
+  }
+}
+
+async function openApp(app) {
+  try {
+    const result = await window.dexter.openInstalledApp(app.appId);
+    addMessage('assistant', 'Opened ' + result.name + '.');
+  } catch (error) {
+    addMessage('assistant', error.message || 'I could not open that app.');
+  }
+}
+
+function helpText() {
+  return 'I work without a paid account or cloud API. Try one of these commands:\n\n• list apps — find installed Windows apps\n• open app Notepad — open an exact app match\n• open folder — choose a folder to open in Explorer\n• screenshot — save a capture of your primary display\n• read clipboard — show clipboard text for this session only\n• copy to clipboard: your text — copy text\n• what time is it — show the current time\n\nFor open-ended chat, optionally enable a local Ollama model in Settings.';
+}
+
+async function runDesktopCommand(text) {
+  const clean = text.trim();
+  const normalized = clean.toLocaleLowerCase();
+
+  if (/^(help|commands?|what can you do)[.!? ]*$/.test(normalized)) return helpText();
+  if (/\b(?:what time is it|current time|what's the time)\b/.test(normalized)) {
+    return 'It is ' + new Date().toLocaleString() + ' on this computer.';
+  }
+  if (/\b(?:list|show|find)\b.*\b(?:installed )?apps?\b/.test(normalized) || normalized === 'apps') {
+    setView('apps');
+    await refreshApps();
+    return 'I loaded your Windows Start menu apps. Search the list and press Open beside an app.';
+  }
+  if (/^(?:open|show)\s+(?:(?:a|the)\s+)?folder\s*[.!?]*$/i.test(clean)) {
+    const result = await window.dexter.chooseAndOpenFolder();
+    return result.canceled ? 'Folder selection canceled.' : 'Opened the folder you chose in File Explorer.';
+  }
+  if (/\b(?:screenshot|capture (?:the )?screen|take (?:a )?screenshot)\b/i.test(clean)) {
+    const result = await window.dexter.saveScreenshot();
+    return result.canceled ? 'Screenshot canceled.' : 'Saved your screenshot to ' + result.filePath + '.';
+  }
+  if (/^(?:read|show|what(?:'s| is) in)\s+(?:my\s+)?clipboard[?!. ]*$/i.test(clean)) {
+    const clipboardText = await window.dexter.readClipboard();
+    if (!clipboardText) return 'Your clipboard is empty.';
+    return clipboardText.length > 8000 ? clipboardText.slice(0, 8000) + '\n\n[Showing the first 8,000 characters.]' : clipboardText;
+  }
+  const copyMatch = clean.match(/^(?:copy|put)\s+(?:to\s+)?clipboard\s*:?\s*([\s\S]+)$/i);
+  if (copyMatch) {
+    await window.dexter.writeClipboard(copyMatch[1]);
+    return 'Copied that text to your Windows clipboard.';
+  }
+  const openMatch = clean.match(/^(?:please\s+)?(?:open|launch|start)\s+(?:the\s+)?(?:app\s+)?(.+?)\s*[.!?]*$/i);
+  if (openMatch && normalizeName(openMatch[1]) !== 'folder') {
+    const apps = state.apps.length ? state.apps : await window.dexter.listInstalledApps();
+    state.apps = apps;
+    const requested = normalizeName(openMatch[1]);
+    const exactMatches = apps.filter((app) => normalizeName(app.name) === requested);
+    if (exactMatches.length === 1) {
+      const result = await window.dexter.openInstalledApp(exactMatches[0].appId);
+      return 'Opened ' + result.name + '.';
+    }
+    appSearch.value = openMatch[1].trim();
+    setView('apps');
+    renderApps();
+    if (exactMatches.length > 1) return 'There is more than one exact match. Choose the right app from the filtered list.';
+    return 'I could not find an exact app name. Here are the closest matches; choose one to open it.';
+  }
+  return null;
+}
+
+async function sendMessage(text) {
+  const content = String(text || '').trim();
+  if (!content || state.busy) return;
+  addMessage('user', content);
+  chatInput.value = '';
+  chatInput.style.height = 'auto';
+  setBusy(true);
+  try {
+    const commandResult = await runDesktopCommand(content);
+    if (commandResult !== null) {
+      const sensitive = /^(?:read|show|what(?:'s| is) in)\s+(?:my\s+)?clipboard/i.test(content) && commandResult !== 'Your clipboard is empty.';
+      addMessage('assistant', commandResult, { sensitive });
+    } else if (state.useLocalModel && state.model.trim()) {
+      const history = state.messages
+        .filter((message) => !message.sensitive && ['user', 'assistant'].includes(message.role))
+        .slice(-18)
+        .map(({ role, content: messageContent }) => ({ role, content: messageContent }));
+      const answer = await window.dexter.askLocalModel({ model: state.model.trim(), messages: history });
+      addMessage('assistant', answer);
+    } else if (state.useLocalModel) {
+      addMessage('assistant', 'Add the name of a model already installed in Ollama in Settings, then try again.');
+    } else {
+      addMessage('assistant', 'I can do desktop commands offline. For open-ended chat, enable a local model in Settings. Your message was not sent to a cloud service. Type “help” to see the commands.');
+    }
+  } catch (error) {
+    addMessage('assistant', error.message || 'Something went wrong while handling that request.');
+  } finally {
+    setBusy(false);
+    chatInput.focus();
+  }
+}
+
+document.querySelectorAll('.nav-button').forEach((button) => {
+  button.addEventListener('click', () => setView(button.dataset.view));
+});
+
+document.querySelectorAll('.prompt-card').forEach((button) => {
+  button.addEventListener('click', () => sendMessage(button.dataset.prompt));
+});
+
+$('#new-chat').addEventListener('click', () => {
+  state.messages = [];
+  saveMessages();
+  renderMessages();
+  setView('assistant');
+  chatInput.focus();
+});
+
+function clearChat() {
+  if (!window.confirm('Clear the conversation saved on this device?')) return;
+  state.messages = [];
+  saveMessages();
+  renderMessages();
+}
+
+$('#clear-chat').addEventListener('click', clearChat);
+$('#clear-chat-settings').addEventListener('click', clearChat);
+
+$('#chat-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  sendMessage(chatInput.value);
+});
+
+chatInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendMessage(chatInput.value);
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 'k') {
+    event.preventDefault();
+    setView('apps');
+    appSearch.focus();
+  }
+});
+
+chatInput.addEventListener('input', () => {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+});
+
+$('#refresh-apps').addEventListener('click', refreshApps);
+appSearch.addEventListener('input', renderApps);
+
+$('#local-ai-enabled').checked = state.useLocalModel;
+$('#model-name').value = state.model;
+$('#speak-replies').checked = state.speakReplies;
+$('#local-ai-enabled').addEventListener('change', (event) => { state.useLocalModel = event.target.checked; saveSettings(); });
+$('#model-name').addEventListener('input', (event) => { state.model = event.target.value.trim(); saveSettings(); });
+$('#speak-replies').addEventListener('change', (event) => { state.speakReplies = event.target.checked; saveSettings(); });
+
+renderMessages();
+window.dexter.getVersion().then((version) => { $('#version-label').textContent = 'Version ' + version; }).catch(() => {});

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+    <meta name="theme-color" content="#0d1117">
+    <title>Dexter Local</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#assistant" aria-label="Dexter Local home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span class="brand-copy"><strong>DEXTER</strong><small>LOCAL DESKTOP AI</small></span>
+        </a>
+
+        <button class="new-chat" id="new-chat" type="button"><span aria-hidden="true">＋</span> New conversation</button>
+
+        <div class="nav-label">WORKSPACE</div>
+        <nav class="side-nav" aria-label="Main navigation">
+          <button class="nav-button active" data-view="assistant" type="button"><span class="nav-icon">✦</span> Assistant</button>
+          <button class="nav-button" data-view="apps" type="button"><span class="nav-icon">▦</span> Desktop apps</button>
+          <button class="nav-button" data-view="settings" type="button"><span class="nav-icon">⚙</span> Settings</button>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <div class="privacy-card">
+            <span class="privacy-dot"></span>
+            <div><strong>Private by default</strong><small>No account or paid API</small></div>
+          </div>
+          <div class="profile-row">
+            <div class="profile-avatar">G</div>
+            <div class="profile-copy"><strong>Personal workspace</strong><small id="version-label">Version 0.1.0</small></div>
+            <span class="profile-menu" aria-hidden="true">···</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <div class="breadcrumbs"><span>Workspace</span><span class="crumb-sep">/</span><strong id="view-title">Assistant</strong></div>
+          <div class="topbar-right"><span class="local-badge"><span></span> LOCAL ONLY</span><button class="icon-button" id="clear-chat" title="Clear conversation" aria-label="Clear conversation" type="button">⌫</button></div>
+        </header>
+
+        <section class="view active" id="view-assistant" aria-label="Assistant">
+          <div class="chat-scroll" id="chat-scroll">
+            <div class="welcome-block" id="welcome-block">
+              <div class="welcome-orbit"><div class="welcome-star">✦</div><i></i><b></b><em></em></div>
+              <div class="eyebrow"><span class="eyebrow-line"></span> YOUR PERSONAL DESKTOP ASSISTANT</div>
+              <h1>Good to have you here.</h1>
+              <p class="welcome-copy">I can help with your Windows desktop using free built-in tools. For open-ended chat, connect an optional local model on this computer.</p>
+              <div class="prompt-grid">
+                <button class="prompt-card" data-prompt="List my installed apps" type="button"><span class="prompt-icon violet">▦</span><span><strong>Find an app</strong><small>See apps installed on Windows</small></span><span class="prompt-arrow">↗</span></button>
+                <button class="prompt-card" data-prompt="Open a folder" type="button"><span class="prompt-icon blue">▱</span><span><strong>Open a folder</strong><small>Choose a folder in Explorer</small></span><span class="prompt-arrow">↗</span></button>
+                <button class="prompt-card" data-prompt="Take a screenshot" type="button"><span class="prompt-icon amber">▧</span><span><strong>Save a screenshot</strong><small>Capture the primary display</small></span><span class="prompt-arrow">↗</span></button>
+                <button class="prompt-card" data-prompt="Help" type="button"><span class="prompt-icon green">⌘</span><span><strong>See what I can do</strong><small>Browse offline commands</small></span><span class="prompt-arrow">↗</span></button>
+              </div>
+            </div>
+            <div class="messages" id="messages" aria-live="polite"></div>
+          </div>
+
+          <div class="composer-wrap">
+            <form class="composer" id="chat-form">
+              <label class="sr-only" for="chat-input">Message Dexter</label>
+              <textarea id="chat-input" rows="1" maxlength="6000" placeholder="Ask Dexter or type a desktop command…"></textarea>
+              <div class="composer-tools"><span class="composer-hint"><kbd>Enter</kbd> to send <span>·</span> <kbd>Shift + Enter</kbd> for a new line</span><button class="send-button" id="send-button" type="submit" aria-label="Send message"><span>Send</span><span aria-hidden="true">↑</span></button></div>
+            </form>
+            <div class="composer-footnote"><span class="shield-icon">◇</span> Desktop commands run only after you ask. Chat stays on this device.</div>
+          </div>
+        </section>
+
+        <section class="view" id="view-apps" aria-label="Desktop apps">
+          <div class="page-content">
+            <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> YOUR COMPUTER</div><h1>Desktop apps</h1><p>Find and open apps registered in the Windows Start menu.</p></div><button class="secondary-button" id="refresh-apps" type="button"><span>↻</span> Refresh list</button></div>
+            <div class="app-search-wrap"><span aria-hidden="true">⌕</span><input id="app-search" type="search" placeholder="Search your installed apps…"><kbd>⌘ K</kbd></div>
+            <div class="apps-summary"><span id="apps-count">Apps are loaded only when you open this page.</span><span class="local-tag">ON DEVICE</span></div>
+            <div class="app-list" id="app-list"></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-settings" aria-label="Settings">
+          <div class="page-content settings-content">
+            <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> PERSONALIZE</div><h1>Settings</h1><p>Keep the assistant local and tune it for your computer.</p></div></div>
+            <div class="settings-section-label">ASSISTANT</div>
+            <article class="setting-card">
+              <div class="setting-icon violet">✦</div><div class="setting-copy"><strong>Use a local AI model</strong><p>Optional. Connect to Ollama running on this computer. Dexter sends chat text only to 127.0.0.1; no cloud API or account is used.</p></div>
+              <label class="switch"><input id="local-ai-enabled" type="checkbox"><span></span><b class="sr-only">Enable local AI</b></label>
+            </article>
+            <article class="setting-card model-setting">
+              <div class="setting-icon blue">◉</div><div class="setting-copy"><strong>Installed model name</strong><p>Enter a model already downloaded in Ollama (for example, the name shown by <code>ollama list</code>).</p><input id="model-name" class="text-input" type="text" maxlength="120" placeholder="e.g. gemma4"></div>
+            </article>
+            <article class="setting-card">
+              <div class="setting-icon green">♫</div><div class="setting-copy"><strong>Speak replies aloud</strong><p>Use a voice provided by Windows and Chromium. This feature does not send audio to a service.</p></div>
+              <label class="switch"><input id="speak-replies" type="checkbox"><span></span><b class="sr-only">Speak replies aloud</b></label>
+            </article>
+            <div class="settings-section-label data-label">DATA &amp; PRIVACY</div>
+            <article class="setting-card privacy-setting">
+              <div class="setting-icon amber">◇</div><div class="setting-copy"><strong>Your chat is stored on this device</strong><p>Conversation history uses this app's local browser storage. Clipboard text is not saved into history. Clear it whenever you want.</p></div><button class="secondary-button danger-button" id="clear-chat-settings" type="button">Clear chat history</button>
+            </article>
+            <div class="settings-note"><span>ⓘ</span><p>Dexter Local has no analytics, sign-in, or automatic uploads. Screenshots are written only to a location you choose.</p></div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
